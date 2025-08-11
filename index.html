@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>불꽃 반응 스펙트럼 (Flame Spectra)</title>
+<style>
+  :root{
+    --bg:#0b0b12; --panel:#13132a; --ink:#ecebff; --muted:#bdb9e9;
+    --accent:#8a7cf8; --border:#2a2950; --radius:16px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0; background: radial-gradient(1000px 700px at 60% -10%, #1b1840 0%, #0d0b1f 50%, var(--bg) 100%);
+    color:var(--ink); font-family:system-ui, -apple-system, 'Noto Sans KR', Roboto, Arial}
+  .wrap{ max-width:1100px; margin:0 auto; padding:18px 14px 28px; display:grid; gap:14px}
+  .toolbar{
+    display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:center;
+    background: linear-gradient(180deg, #19183a, #12112d);
+    border:1px solid var(--border); border-radius:var(--radius); padding:10px;
+    box-shadow:0 10px 30px rgba(0,0,0,.35);
+  }
+  .btn{
+    background: #1b1a33; color:var(--ink); border:1px solid var(--border);
+    padding:10px 14px; border-radius:12px; font-weight:600; cursor:pointer;
+  }
+  .btn.active{ outline:2px solid var(--accent); }
+  .row{display:flex; gap:10px; align-items:center; margin-left:auto}
+  select{
+    background:#1b1a33; color:var(--ink); border:1px solid var(--border);
+    padding:10px 12px; border-radius:12px;
+  }
+  .card{ background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.0));
+    border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; box-shadow:0 10px 30px rgba(0,0,0,.35) }
+  .card h2{ margin:0; padding:12px 14px; font-size:14px; color:#cfcaff; background:linear-gradient(180deg,#1d1b3a,#141333); border-bottom:1px solid var(--border)}
+  .inner{ padding:12px 14px }
+  canvas{ width:100%; height:220px; display:block; background:#05050b; border-radius:12px }
+  .legend{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; font-size:12px; color:var(--muted) }
+  .chip{ padding:4px 8px; border-radius:999px; border:1px solid #3b3a6b; background:#161533 }
+  .titlebar{display:flex; align-items:center; justify-content:space-between}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="toolbar" id="toolbar">
+      <!-- element buttons will be injected -->
+      <div class="row">
+        <label for="difficulty" style="color:#bfbbe9;font-size:13px">난이도</label>
+        <select id="difficulty">
+          <option value="easy">쉬움</option>
+          <option value="normal" selected>보통</option>
+          <option value="hard">어려움</option>
+        </select>
+      </div>
+    </div>
+
+    <section class="card">
+      <h2>스펙트럼</h2>
+      <div class="inner">
+        <div class="titlebar">
+          <div id="currentName" style="color:#bfbbe9;font-size:13px">원소 선택</div>
+          <div class="legend" id="legend"></div>
+        </div>
+        <canvas id="canvas" width="1200" height="240"></canvas>
+      </div>
+    </section>
+  </div>
+
+<script>
+// ===== 데이터: 불꽃 반응 대표 방출선 (교육용 단순화, nm) =====
+const ELEMENT_LINES = {
+  "리튬 (Li)": [ {nm:670.8,I:1.0} ],
+  "나트륨 (Na)": [ {nm:589.0,I:1.0,label:"D1"}, {nm:589.6,I:1.0,label:"D2"} ],
+  "칼륨 (K)":   [ {nm:404.4,I:0.9}, {nm:766.5,I:0.8} ], // 766.5는 가시 끝이라 약하게 보일 수 있음
+  "칼슘 (Ca)":  [ {nm:422.7,I:1.0}, {nm:616.2,I:0.6}, {nm:643.9,I:0.6} ],
+  "스트론튬 (Sr)":[ {nm:606.0,I:0.8}, {nm:650.1,I:1.0} ],
+  "바륨 (Ba)":  [ {nm:493.4,I:0.7}, {nm:524.2,I:1.0}, {nm:553.5,I:0.9} ],
+  "구리 (Cu)":  [ {nm:510.6,I:1.0}, {nm:521.8,I:0.9}, {nm:578.2,I:0.5} ]
+};
+
+// ===== 유틸: nm→RGB 근사 =====
+function wavelengthToRGB(nm, gamma=0.8){
+  let r=0,g=0,b=0,f=0;
+  if (nm>=380 && nm<440){ r=-(nm-440)/(440-380); g=0; b=1; }
+  else if(nm>=440 && nm<490){ r=0; g=(nm-440)/(490-440); b=1; }
+  else if(nm>=490 && nm<510){ r=0; g=1; b=-(nm-510)/(510-490); }
+  else if(nm>=510 && nm<580){ r=(nm-510)/(580-510); g=1; b=0; }
+  else if(nm>=580 && nm<645){ r=1; g=-(nm-645)/(645-580); b=0; }
+  else if(nm>=645 && nm<=750){ r=1; g=0; b=0; }
+  if(nm>=380 && nm<420) f=0.3+0.7*(nm-380)/(420-380);
+  else if(nm>=420 && nm<=700) f=1;
+  else if(nm>700 && nm<=750) f=0.3+0.7*(750-nm)/(750-700);
+  else f=0;
+  const R = r===0?0:Math.round(255*Math.pow(r*f,gamma));
+  const G = g===0?0:Math.round(255*Math.pow(g*f,gamma));
+  const B = b===0?0:Math.round(255*Math.pow(b*f,gamma));
+  return [R,G,B];
+}
+const rgbStr=(arr,a=1)=>`rgba(${arr[0]},${arr[1]},${arr[2]},${a})`;
+
+// ===== 렌더러 =====
+class FlameSpectrum {
+  constructor(canvas, legend, caption){
+    this.c = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.legend = legend;
+    this.caption = caption;
+    this.lines = [];
+    this.resolution = 4;  // line width/blur base
+    this.drawBg();
+  }
+  setDifficulty(level){
+    // 쉬움: 두꺼운 선/번짐↑, 보통: 기본, 어려움: 가는 선/번짐↓
+    if(level==='easy'){ this.resolution = 10; }
+    else if(level==='hard'){ this.resolution = 2; }
+    else { this.resolution = 5; }
+    this.draw();
+  }
+  setElement(name){
+    this.caption.textContent = name;
+    this.lines = ELEMENT_LINES[name] || [];
+    this.draw();
+  }
+  nmToX(nm){
+    const pad=10;
+    return pad + ((nm-380)/(750-380))*(this.c.width-pad*2);
+  }
+  drawBg(){
+    const {ctx,c}=this;
+    ctx.clearRect(0,0,c.width,c.height);
+    ctx.fillStyle="#05050b"; ctx.fillRect(0,0,c.width,c.height);
+    ctx.fillStyle="rgba(255,255,255,.04)";
+    for(let i=0;i<=18;i++){ const x=i*(c.width/18); ctx.fillRect(x,0,1,c.height); }
+  }
+  draw(){
+    this.drawBg();
+    this.legend.innerHTML='';
+    const {ctx,c}=this, h=c.height;
+    // darken base for line spectra look
+    ctx.fillStyle="rgba(0,0,0,.55)"; ctx.fillRect(0,0,c.width,c.height);
+
+    this.lines.forEach(line=>{
+      const x=this.nmToX(line.nm);
+      const [r,g,b]=wavelengthToRGB(line.nm);
+      // visible range clamp
+      if(line.nm<380 || line.nm>750) return;
+      // blur passes by resolution
+      const passes=Math.max(2, Math.round(this.resolution));
+      for(let p=passes; p>=1; p--){
+        const alpha = (line.I||1) * (p/(passes*2.2));
+        ctx.fillStyle=rgbStr([r,g,b],alpha);
+        ctx.fillRect(x-p, 0, this.resolution + p*2, h);
+      }
+      // bright core
+      ctx.fillStyle=rgbStr([r,g,b], Math.min(1,(line.I||1)*1.1));
+      ctx.fillRect(x-this.resolution/2, 0, this.resolution, h);
+
+      // small label chips in legend
+      const chip=document.createElement('span');
+      chip.className='chip';
+      chip.textContent = `${Math.round(line.nm)} nm${line.label?(" "+line.label):""}`;
+      this.legend.appendChild(chip);
+    });
+  }
+}
+
+// ===== UI =====
+const canvas = new FlameSpectrum(
+  document.getElementById('canvas'),
+  document.getElementById('legend'),
+  document.getElementById('currentName')
+);
+
+// Build element buttons
+const toolbar = document.getElementById('toolbar');
+const names = Object.keys(ELEMENT_LINES);
+const btns=[];
+names.forEach((name,i)=>{
+  const b=document.createElement('button');
+  b.className='btn';
+  b.textContent=name;
+  b.addEventListener('click', ()=>{
+    btns.forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    canvas.setElement(name);
+  });
+  toolbar.insertBefore(b, toolbar.querySelector('.row'));
+  btns.push(b);
+});
+btns[0].classList.add('active');
+canvas.setElement(names[0]);
+
+document.getElementById('difficulty').addEventListener('change', (e)=>{
+  canvas.setDifficulty(e.target.value);
+});
+canvas.setDifficulty('normal');
+</script>
+</body>
+</html>
